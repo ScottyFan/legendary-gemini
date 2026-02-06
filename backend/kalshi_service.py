@@ -5,7 +5,7 @@ Handles all interactions with Kalshi API for market data retrieval
 
 import requests
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 
 
@@ -23,6 +23,9 @@ class KalshiService:
             password: Kalshi account password (optional)
         """
         self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        })
         self.token = None
         
         if email and password:
@@ -66,32 +69,81 @@ class KalshiService:
             List of market dictionaries
         """
         try:
+            # Always fetch a larger batch to ensure we have enough candidates after filtering
+            # especially for custom categories like 'Trump' that are filtered client-side
+            api_limit = max(100, limit)
+            
             params = {
-                "limit": limit,
+                "limit": api_limit,
                 "status": "open"
             }
             
             # Add category filter if it's a standard category
-            if category.lower() != 'trump':
-                params["series_ticker"] = category.upper()
+            # Note: Kalshi API uses 'series_ticker' or 'ticker' for filtering
+            # For broader categories, we might need to rely on client-side filtering
+            # or use specific series tickers if known.
+            # 'Politics', 'Economics' are not direct series tickers, so we fetch open markets
+            # and filter client-side if needed, or rely on specific known tickers.
             
+            # If category is specific (not just a broad filter logic we added), try using it.
+            # But "Politics" is not a valid series_ticker usually.
+            # Let's try to fetch popular markets first if category is generic.
+            
+            if category.lower() not in ['trump', 'politics', 'economics']:
+                 params["series_ticker"] = category.upper()
+
             response = self.session.get(
                 f"{self.BASE_URL}/markets",
                 params=params
             )
+            
+            if not response.ok:
+                print(f"API Error: {response.status_code} - {response.text}")
+                
             response.raise_for_status()
             
             markets = response.json().get("markets", [])
             
-            # For 'Trump' category, filter by ticker or title containing Trump
-            if category.lower() == 'trump':
-                markets = [
-                    m for m in markets 
-                    if 'trump' in m.get('title', '').lower() or 
-                       'trump' in m.get('ticker', '').lower()
-                ]
+            # Client-side filtering
+            filtered_markets = []
+            for m in markets:
+                title = m.get('title', '').lower()
+                ticker = m.get('ticker', '').lower()
+                category_lower = category.lower()
+                
+                if category_lower == 'trump':
+                    if 'trump' in title or 'trump' in ticker:
+                        filtered_markets.append(m)
+                elif category_lower == 'politics':
+                    # Simple keyword matching for politics
+                    keywords = ['election', 'president', 'senate', 'house', 'policy', 'bill', 'law', 'vote']
+                    if any(k in title or k in ticker for k in keywords):
+                        filtered_markets.append(m)
+                elif category_lower == 'economics':
+                     keywords = ['fed', 'rate', 'inflation', 'gdp', 'cpi', 'recession', 'economy', 'bank']
+                     if any(k in title or k in ticker for k in keywords):
+                        filtered_markets.append(m)
+                else:
+                    # If we used series_ticker in params, assume API filtered it, or do loose match
+                    filtered_markets.append(m)
+
+            # If no specific filtering matched (or category was just a general request), 
+            # and we got results, maybe return them if we didn't filter too aggressively?
+            # For now, if we have results from API and we are not in special categories, trust API.
+            # If we are in special categories and found nothing, maybe return raw markets as fallback?
+            # Let's stick to the logic:
             
-            return markets
+            if not filtered_markets and category.lower() not in ['trump', 'politics', 'economics']:
+                 filtered_markets = markets
+            
+            # If we still have nothing and the user asked for "Politics" or "Economics", 
+            # maybe just return the top volume markets as a fallback?
+            if not filtered_markets and markets:
+                 # Sort by volume
+                 markets.sort(key=lambda x: x.get('volume_24h', 0), reverse=True)
+                 return markets[:limit]
+
+            return filtered_markets[:limit]
         except Exception as e:
             print(f"Error fetching markets: {e}")
             return []
@@ -139,6 +191,12 @@ class KalshiService:
                     "max_ts": int(end_time.timestamp())
                 }
             )
+            
+            if response.status_code == 404:
+                # Market history not found (common for new or specific types of markets)
+                # Return empty DataFrame gracefully without printing error
+                return pd.DataFrame()
+                
             response.raise_for_status()
             
             history = response.json().get("history", [])
@@ -185,8 +243,14 @@ class KalshiService:
         
         # Time-based features
         if market.get('close_time'):
-            close_time = datetime.fromisoformat(market['close_time'].replace('Z', '+00:00'))
-            features['days_to_expiration'] = (close_time - datetime.now()).days
+            # Parse close_time, handling 'Z' manually if python < 3.11
+            close_time_str = market['close_time'].replace('Z', '+00:00')
+            close_time = datetime.fromisoformat(close_time_str)
+            
+            # Ensure we use offset-aware current time
+            now = datetime.now(timezone.utc)
+            
+            features['days_to_expiration'] = (close_time - now).days
         else:
             features['days_to_expiration'] = 0
         

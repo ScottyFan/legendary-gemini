@@ -28,22 +28,28 @@ async def main():
         metrics = service.train_model()
         print(f"✓ Model trained! Test accuracy: {metrics['test_accuracy']:.1%}\n")
     
-    # Get Trump markets
-    print("Fetching Trump-related markets from Kalshi...")
+    # Get popular markets
+    print("Fetching popular markets from Kalshi...")
     try:
-        markets = service.get_markets_by_category("Trump", limit=3)
+        # Try fetching any open markets first
+        markets = service.kalshi.get_markets_by_category("Politics", limit=10)
         
+        # If no politics markets, try getting any markets
+        if not markets:
+            print("No politics markets found, fetching trending markets...")
+            markets = service.kalshi.get_markets_by_category("Economics", limit=10)
+            
         if not markets:
             print("⚠️  No markets found. Kalshi API might be temporarily unavailable.")
             print("   This is normal - just try again in a few seconds.")
             return
         
         print(f"✓ Found {len(markets)} markets:\n")
-        for i, market in enumerate(markets, 1):
+        for i, market in enumerate(markets[:5], 1):  # Show top 5
             print(f"{i}. {market['ticker']}")
             print(f"   {market['title']}")
-            print(f"   Current price: ${market['price']:.2f}")
-            print(f"   24h volume: {market['volume']:,}")
+            print(f"   Current price: ${market.get('last_price', 0)/100:.2f}")
+            print(f"   24h volume: {market.get('volume_24h', 0):,}")
             print()
         
         # Get prediction for first market
@@ -53,7 +59,7 @@ async def main():
         
         prediction = await service.get_full_prediction(
             selected['ticker'], 
-            category="Trump"
+            category="General"
         )
         
         if 'error' in prediction:

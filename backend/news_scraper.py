@@ -18,7 +18,10 @@ class NewsScraper:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.google.com/'
         })
         
         # News sources configuration
@@ -28,6 +31,7 @@ class NewsScraper:
                 'base_url': 'https://www.cnn.com'
             },
             'reuters': {
+                # Updated Reuters search URL and handling
                 'search_url': 'https://www.reuters.com/site-search/?query={query}',
                 'base_url': 'https://www.reuters.com'
             },
@@ -51,6 +55,11 @@ class NewsScraper:
         """
         if sources is None:
             sources = list(self.sources.keys())
+            
+        # Clean query: remove special chars that might break URLs
+        clean_query = re.sub(r'[^\w\s]', ' ', query).strip()
+        # Collapse multiple spaces
+        clean_query = re.sub(r'\s+', ' ', clean_query)
         
         all_articles = []
         
@@ -59,11 +68,12 @@ class NewsScraper:
                 continue
             
             try:
-                articles = self._search_source(source, query)
+                articles = self._search_source(source, clean_query)
                 all_articles.extend(articles)
                 time.sleep(1)  # Rate limiting
             except Exception as e:
-                print(f"Error scraping {source}: {e}")
+                # print(f"Error scraping {source}: {e}") # Reduce noise
+                pass
         
         # Sort by date (most recent first) and limit
         all_articles.sort(key=lambda x: x.get('published_date', ''), reverse=True)

@@ -298,61 +298,62 @@ class MarketClassifier:
         self.is_trained = True
 
 
+def generate_synthetic_data(n_samples: int = 200) -> Tuple[List[Dict], List[str]]:
+    """Generate synthetic training data"""
+    data = []
+    labels = []
+    
+    label_options = ['strong_buy', 'buy', 'hold', 'sell', 'strong_sell']
+    
+    for _ in range(n_samples):
+        # Generate market features
+        price_change = np.random.normal(0, 0.1)
+        sentiment = np.random.normal(0, 0.3)
+        
+        # Label based on features (simplified logic)
+        if price_change > 0.1 and sentiment > 0.3:
+            label = 'strong_buy'
+        elif price_change > 0 and sentiment > 0:
+            label = 'buy'
+        elif price_change < -0.1 and sentiment < -0.3:
+            label = 'strong_sell'
+        elif price_change < 0 and sentiment < 0:
+            label = 'sell'
+        else:
+            label = 'hold'
+        
+        data_point = {
+            'market_features': {
+                'current_price': np.random.uniform(0.3, 0.7),
+                'volume_24h': np.random.randint(1000, 100000),
+                'open_interest': np.random.randint(5000, 50000),
+                'bid_ask_spread': np.random.uniform(0.01, 0.05),
+                'days_to_expiration': np.random.randint(1, 90),
+                'price_change_7d': price_change,
+                'volatility': np.random.uniform(0.01, 0.15),
+                'volume_trend': np.random.normal(0, 0.2)
+            },
+            'news_features': {
+                'article_count': np.random.randint(0, 30),
+                'avg_sentiment': sentiment,
+                'sentiment_std': np.random.uniform(0, 0.3),
+                'positive_ratio': max(0, min(1, 0.5 + sentiment)),
+                'negative_ratio': max(0, min(1, 0.5 - sentiment)),
+                'source_diversity': np.random.uniform(0.3, 1.0),
+                'recency_score': np.random.uniform(0, 1)
+            }
+        }
+        
+        data.append(data_point)
+        labels.append(label)
+    
+    return data, labels
+
+
 # Example usage and synthetic data generation
 if __name__ == "__main__":
     # Create synthetic training data for demonstration
     np.random.seed(42)
-    
-    def generate_synthetic_data(n_samples: int = 200) -> Tuple[List[Dict], List[str]]:
-        """Generate synthetic training data"""
-        data = []
-        labels = []
-        
-        label_options = ['strong_buy', 'buy', 'hold', 'sell', 'strong_sell']
-        
-        for _ in range(n_samples):
-            # Generate market features
-            price_change = np.random.normal(0, 0.1)
-            sentiment = np.random.normal(0, 0.3)
-            
-            # Label based on features (simplified logic)
-            if price_change > 0.1 and sentiment > 0.3:
-                label = 'strong_buy'
-            elif price_change > 0 and sentiment > 0:
-                label = 'buy'
-            elif price_change < -0.1 and sentiment < -0.3:
-                label = 'strong_sell'
-            elif price_change < 0 and sentiment < 0:
-                label = 'sell'
-            else:
-                label = 'hold'
-            
-            data_point = {
-                'market_features': {
-                    'current_price': np.random.uniform(0.3, 0.7),
-                    'volume_24h': np.random.randint(1000, 100000),
-                    'open_interest': np.random.randint(5000, 50000),
-                    'bid_ask_spread': np.random.uniform(0.01, 0.05),
-                    'days_to_expiration': np.random.randint(1, 90),
-                    'price_change_7d': price_change,
-                    'volatility': np.random.uniform(0.01, 0.15),
-                    'volume_trend': np.random.normal(0, 0.2)
-                },
-                'news_features': {
-                    'article_count': np.random.randint(0, 30),
-                    'avg_sentiment': sentiment,
-                    'sentiment_std': np.random.uniform(0, 0.3),
-                    'positive_ratio': max(0, min(1, 0.5 + sentiment)),
-                    'negative_ratio': max(0, min(1, 0.5 - sentiment)),
-                    'source_diversity': np.random.uniform(0.3, 1.0),
-                    'recency_score': np.random.uniform(0, 1)
-                }
-            }
-            
-            data.append(data_point)
-            labels.append(label)
-        
-        return data, labels
     
     # Generate and train
     print("Generating synthetic training data...")
