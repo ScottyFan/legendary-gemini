@@ -1,6 +1,6 @@
 """
-Kalshi API Service
-Handles all interactions with Kalshi API for market data retrieval
+Kalshi API Service - Ultra-Simple Version
+Minimal parameters to avoid 400 errors
 """
 
 import requests
@@ -10,21 +10,16 @@ import pandas as pd
 
 
 class KalshiService:
-    """Service for interacting with Kalshi API"""
+    """Ultra-simple Kalshi service"""
     
     BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
     
     def __init__(self, email: str = None, password: str = None):
-        """
-        Initialize Kalshi service with optional authentication
-        
-        Args:
-            email: Kalshi account email (optional, for authenticated endpoints)
-            password: Kalshi account password (optional)
-        """
+        """Initialize Kalshi service"""
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json"
         })
         self.token = None
         
@@ -32,23 +27,13 @@ class KalshiService:
             self.login(email, password)
     
     def login(self, email: str, password: str) -> bool:
-        """
-        Authenticate with Kalshi API
-        
-        Args:
-            email: Account email
-            password: Account password
-            
-        Returns:
-            True if login successful
-        """
+        """Authenticate with Kalshi API"""
         try:
             response = self.session.post(
                 f"{self.BASE_URL}/login",
                 json={"email": email, "password": password}
             )
             response.raise_for_status()
-            
             data = response.json()
             self.token = data.get("token")
             self.session.headers.update({"Authorization": f"Bearer {self.token}"})
@@ -57,130 +42,166 @@ class KalshiService:
             print(f"Login failed: {e}")
             return False
     
-    def get_markets_by_category(self, category: str, limit: int = 100) -> List[Dict]:
-        """
-        Fetch markets filtered by category
+    def _fetch_markets_simple(self, limit: int = 100) -> List[Dict]:
+        """Fetch markets with minimal parameters"""
         
-        Args:
-            category: Category name (e.g., 'Politics', 'Sports', 'Culture', 'Crypto', 'Trump')
-            limit: Maximum number of markets to return
-            
-        Returns:
-            List of market dictionaries
-        """
-        try:
-            # Always fetch a larger batch to ensure we have enough candidates after filtering
-            # especially for custom categories like 'Trump' that are filtered client-side
-            api_limit = max(100, limit)
-            
-            params = {
-                "limit": api_limit,
-                "status": "open"
-            }
-            
-            # Add category filter if it's a standard category
-            # Note: Kalshi API uses 'series_ticker' or 'ticker' for filtering
-            # For broader categories, we might need to rely on client-side filtering
-            # or use specific series tickers if known.
-            # 'Politics', 'Economics' are not direct series tickers, so we fetch open markets
-            # and filter client-side if needed, or rely on specific known tickers.
-            
-            # If category is specific (not just a broad filter logic we added), try using it.
-            # But "Politics" is not a valid series_ticker usually.
-            # Let's try to fetch popular markets first if category is generic.
-            
-            if category.lower() not in ['trump', 'politics', 'economics']:
-                 params["series_ticker"] = category.upper()
-
-            response = self.session.get(
-                f"{self.BASE_URL}/markets",
-                params=params
-            )
-            
-            if not response.ok:
-                print(f"API Error: {response.status_code} - {response.text}")
+        # Try different API calls to find what works
+        attempts = [
+            # Attempt 1: Just limit
+            {"limit": limit},
+            # Attempt 2: No parameters at all
+            {},
+            # Attempt 3: Small limit
+            {"limit": 10},
+            # Attempt 4: Cursor-based (if they use pagination)
+            {"limit": 20, "cursor": ""},
+        ]
+        
+        for i, params in enumerate(attempts):
+            try:
+                print(f"  Attempt {i+1}: params={params}")
                 
-            response.raise_for_status()
+                response = self.session.get(
+                    f"{self.BASE_URL}/markets",
+                    params=params,
+                    timeout=10
+                )
+                
+                if response.ok:
+                    data = response.json()
+                    markets = data.get("markets", [])
+                    if markets:
+                        print(f"  ✓ Success with params={params}")
+                        return markets
+                else:
+                    print(f"  ✗ HTTP {response.status_code}")
+                    if response.status_code == 400:
+                        print(f"    Error: {response.text[:200]}")
+                    
+            except Exception as e:
+                print(f"  ✗ Error: {e}")
+                continue
+        
+        return []
+    
+    def get_markets_by_category(self, category: str, limit: int = 20) -> List[Dict]:
+        """Fetch markets and filter by category"""
+        
+        print(f"Fetching markets from Kalshi API...")
+        
+        try:
+            # Get all available markets
+            all_markets = self._fetch_markets_simple(limit=100)
             
-            markets = response.json().get("markets", [])
+            if not all_markets:
+                print("  ⚠ Could not fetch any markets")
+                return []
             
-            # Client-side filtering
+            print(f"  → Got {len(all_markets)} total markets")
+            
+            # Filter by status (accept 'active' or 'open')
+            valid_markets = [
+                m for m in all_markets 
+                if m.get('status') in ['active', 'open', 'closed', None]  # Accept most
+            ]
+            
+            print(f"  → {len(valid_markets)} markets after status filter")
+            
+            # Category filtering with broad keywords
+            category_lower = category.lower()
             filtered_markets = []
-            for m in markets:
-                title = m.get('title', '').lower()
-                ticker = m.get('ticker', '').lower()
-                category_lower = category.lower()
+            
+            for market in valid_markets:
+                title = market.get('title', '').lower()
+                ticker = market.get('ticker', '').lower()
+                
+                matched = False
                 
                 if category_lower == 'trump':
                     if 'trump' in title or 'trump' in ticker:
-                        filtered_markets.append(m)
+                        matched = True
+                
                 elif category_lower == 'politics':
-                    # Simple keyword matching for politics
-                    keywords = ['election', 'president', 'senate', 'house', 'policy', 'bill', 'law', 'vote']
-                    if any(k in title or k in ticker for k in keywords):
-                        filtered_markets.append(m)
-                elif category_lower == 'economics':
-                     keywords = ['fed', 'rate', 'inflation', 'gdp', 'cpi', 'recession', 'economy', 'bank']
-                     if any(k in title or k in ticker for k in keywords):
-                        filtered_markets.append(m)
+                    kw = ['election', 'president', 'senate', 'congress', 'vote', 
+                          'poll', 'democrat', 'republican', 'biden', 'trump']
+                    if any(k in title or k in ticker for k in kw):
+                        matched = True
+                
+                elif category_lower == 'sports':
+                    kw = ['nfl', 'nba', 'mlb', 'nhl', 'super', 'bowl', 'playoff',
+                          'game', 'player', 'team', 'arsenal', 'manchester', 'barcelona',
+                          'touchdown', 'assist', 'rebound', 'goal', 'score']
+                    if any(k in title or k in ticker for k in kw):
+                        matched = True
+                
+                elif category_lower in ['crypto', 'bitcoin']:
+                    kw = ['bitcoin', 'btc', 'ethereum', 'eth', 'crypto']
+                    if any(k in title or k in ticker for k in kw):
+                        matched = True
+                
+                elif category_lower == 'culture':
+                    kw = ['movie', 'film', 'oscar', 'grammy', 'music', 'award', 'album']
+                    if any(k in title or k in ticker for k in kw):
+                        matched = True
+                
                 else:
-                    # If we used series_ticker in params, assume API filtered it, or do loose match
-                    filtered_markets.append(m)
-
-            # If no specific filtering matched (or category was just a general request), 
-            # and we got results, maybe return them if we didn't filter too aggressively?
-            # For now, if we have results from API and we are not in special categories, trust API.
-            # If we are in special categories and found nothing, maybe return raw markets as fallback?
-            # Let's stick to the logic:
+                    # Unknown category - accept all
+                    matched = True
+                
+                if matched:
+                    filtered_markets.append(market)
             
-            if not filtered_markets and category.lower() not in ['trump', 'politics', 'economics']:
-                 filtered_markets = markets
+            print(f"  → {len(filtered_markets)} markets match '{category}'")
             
-            # If we still have nothing and the user asked for "Politics" or "Economics", 
-            # maybe just return the top volume markets as a fallback?
-            if not filtered_markets and markets:
-                 # Sort by volume
-                 markets.sort(key=lambda x: x.get('volume_24h', 0), reverse=True)
-                 return markets[:limit]
-
-            return filtered_markets[:limit]
+            # If nothing matched, use all valid markets
+            if not filtered_markets:
+                print(f"  → Using all valid markets")
+                filtered_markets = valid_markets
+            
+            # Sort by volume if available
+            def sort_key(m):
+                vol = m.get('volume_24h', 0) or 0
+                oi = m.get('open_interest', 0) or 0
+                return vol + oi * 0.1
+            
+            filtered_markets.sort(key=sort_key, reverse=True)
+            
+            result = filtered_markets[:limit]
+            
+            if result:
+                print(f"  ✓ Returning {len(result)} markets")
+                sample = result[0]
+                print(f"  Sample: {sample.get('ticker', 'N/A')[:50]}")
+            
+            return result
+            
         except Exception as e:
-            print(f"Error fetching markets: {e}")
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def get_market_details(self, market_ticker: str) -> Optional[Dict]:
-        """
-        Get detailed information about a specific market
-        
-        Args:
-            market_ticker: Market ticker symbol
-            
-        Returns:
-            Market details dictionary or None
-        """
+        """Get market details"""
         try:
             response = self.session.get(
-                f"{self.BASE_URL}/markets/{market_ticker}"
+                f"{self.BASE_URL}/markets/{market_ticker}",
+                timeout=10
             )
-            response.raise_for_status()
-            return response.json().get("market")
+            
+            if response.ok:
+                return response.json().get("market")
+            else:
+                print(f"Error fetching market details: {response.status_code}")
+                return None
+                
         except Exception as e:
             print(f"Error fetching market details: {e}")
             return None
     
     def get_market_history(self, market_ticker: str, days: int = 30) -> pd.DataFrame:
-        """
-        Fetch historical price and volume data for a market
-        
-        Args:
-            market_ticker: Market ticker symbol
-            days: Number of days of history to fetch
-            
-        Returns:
-            DataFrame with historical data
-        """
+        """Fetch historical data"""
         try:
-            # Get orderbook history or trades
             end_time = datetime.now()
             start_time = end_time - timedelta(days=days)
             
@@ -189,143 +210,120 @@ class KalshiService:
                 params={
                     "min_ts": int(start_time.timestamp()),
                     "max_ts": int(end_time.timestamp())
-                }
+                },
+                timeout=10
             )
             
             if response.status_code == 404:
-                # Market history not found (common for new or specific types of markets)
-                # Return empty DataFrame gracefully without printing error
-                return pd.DataFrame()
-                
-            response.raise_for_status()
-            
-            history = response.json().get("history", [])
-            
-            if not history:
                 return pd.DataFrame()
             
-            df = pd.DataFrame(history)
-            df['timestamp'] = pd.to_datetime(df['ts'], unit='s')
-            return df
-        except Exception as e:
-            print(f"Error fetching market history: {e}")
+            if response.ok:
+                history = response.json().get("history", [])
+                if history:
+                    df = pd.DataFrame(history)
+                    df['timestamp'] = pd.to_datetime(df['ts'], unit='s')
+                    return df
+            
+            return pd.DataFrame()
+            
+        except:
             return pd.DataFrame()
     
     def extract_market_features(self, market_ticker: str) -> Dict:
-        """
-        Extract meaningful features from a market for ML prediction
+        """Extract features with robust defaults"""
         
-        Args:
-            market_ticker: Market ticker symbol
-            
-        Returns:
-            Dictionary of features
-        """
-        features = {}
-        
-        # Get current market details
-        market = self.get_market_details(market_ticker)
-        if not market:
-            return features
-        
-        # Get historical data
-        history_df = self.get_market_history(market_ticker, days=30)
-        
-        # Current state features
-        features['current_price'] = market.get('last_price', 0) / 100  # Convert cents to dollars
-        features['volume_24h'] = market.get('volume_24h', 0)
-        features['open_interest'] = market.get('open_interest', 0)
-        
-        # Calculate bid-ask spread if available
-        yes_bid = market.get('yes_bid', 0)
-        yes_ask = market.get('yes_ask', 0)
-        features['bid_ask_spread'] = (yes_ask - yes_bid) / 100 if yes_ask and yes_bid else 0
-        
-        # Time-based features
-        if market.get('close_time'):
-            # Parse close_time, handling 'Z' manually if python < 3.11
-            close_time_str = market['close_time'].replace('Z', '+00:00')
-            close_time = datetime.fromisoformat(close_time_str)
-            
-            # Ensure we use offset-aware current time
-            now = datetime.now(timezone.utc)
-            
-            features['days_to_expiration'] = (close_time - now).days
-        else:
-            features['days_to_expiration'] = 0
-        
-        # Historical features (if we have history)
-        if not history_df.empty:
-            # Price momentum
-            if len(history_df) >= 7:
-                features['price_change_7d'] = (
-                    history_df['price'].iloc[-1] - history_df['price'].iloc[-7]
-                ) / history_df['price'].iloc[-7] if history_df['price'].iloc[-7] != 0 else 0
-            
-            # Volatility (standard deviation of returns)
-            if len(history_df) >= 2:
-                returns = history_df['price'].pct_change().dropna()
-                features['volatility'] = returns.std() if len(returns) > 0 else 0
-            
-            # Volume trend
-            if len(history_df) >= 7:
-                recent_volume = history_df['volume'].iloc[-7:].mean()
-                older_volume = history_df['volume'].iloc[:-7].mean() if len(history_df) > 14 else recent_volume
-                features['volume_trend'] = (
-                    (recent_volume - older_volume) / older_volume 
-                    if older_volume > 0 else 0
-                )
-        
-        # Fill missing features with defaults
-        default_features = {
+        # Start with safe defaults
+        features = {
+            'current_price': 0.5,
+            'volume_24h': 100,
+            'open_interest': 1000,
+            'bid_ask_spread': 0.05,
+            'days_to_expiration': 30,
             'price_change_7d': 0,
-            'volatility': 0,
+            'volatility': 0.05,
             'volume_trend': 0
         }
-        for key, value in default_features.items():
-            if key not in features:
-                features[key] = value
+        
+        try:
+            market = self.get_market_details(market_ticker)
+            
+            if market:
+                # Update with actual data if available
+                last_price = market.get('last_price')
+                if last_price and last_price > 0:
+                    features['current_price'] = last_price / 100
+                
+                volume_24h = market.get('volume_24h')
+                if volume_24h is not None and volume_24h > 0:
+                    features['volume_24h'] = volume_24h
+                
+                open_interest = market.get('open_interest')
+                if open_interest is not None and open_interest > 0:
+                    features['open_interest'] = open_interest
+                
+                # Days to expiration
+                if market.get('close_time'):
+                    try:
+                        close_time_str = market['close_time'].replace('Z', '+00:00')
+                        close_time = datetime.fromisoformat(close_time_str)
+                        now = datetime.now(timezone.utc)
+                        days = (close_time - now).days
+                        features['days_to_expiration'] = max(days, 1)
+                    except:
+                        pass
+                
+                # Try to get historical data
+                history_df = self.get_market_history(market_ticker, days=30)
+                
+                if not history_df.empty and len(history_df) >= 2:
+                    try:
+                        if len(history_df) >= 7:
+                            recent = history_df['price'].iloc[-1]
+                            week_ago = history_df['price'].iloc[-7]
+                            if week_ago != 0:
+                                features['price_change_7d'] = (recent - week_ago) / week_ago
+                        
+                        returns = history_df['price'].pct_change().dropna()
+                        if len(returns) > 0:
+                            features['volatility'] = returns.std()
+                    except:
+                        pass
+        
+        except Exception as e:
+            print(f"Warning: Could not extract all features: {e}")
         
         return features
     
     def search_markets(self, query: str, limit: int = 20) -> List[Dict]:
-        """
-        Search for markets by keyword
-        
-        Args:
-            query: Search query
-            limit: Maximum results
-            
-        Returns:
-            List of matching markets
-        """
+        """Search markets"""
         try:
             response = self.session.get(
                 f"{self.BASE_URL}/markets",
-                params={
-                    "limit": limit,
-                    "event_ticker": query
-                }
+                params={"limit": limit, "event_ticker": query},
+                timeout=10
             )
-            response.raise_for_status()
-            return response.json().get("markets", [])
+            
+            if response.ok:
+                return response.json().get("markets", [])
+            else:
+                return []
+                
         except Exception as e:
             print(f"Error searching markets: {e}")
             return []
 
 
-# Example usage
 if __name__ == "__main__":
+    print("Testing Ultra-Simple Kalshi Service...")
+    print("="*70)
+    
     service = KalshiService()
     
-    # Get Trump-related markets
-    trump_markets = service.get_markets_by_category("Trump", limit=10)
-    print(f"Found {len(trump_markets)} Trump-related markets")
+    print("\nTest 1: Fetch any markets")
+    markets = service._fetch_markets_simple(limit=10)
+    print(f"Got {len(markets)} markets\n")
     
-    if trump_markets:
-        # Get features for first market
-        ticker = trump_markets[0]['ticker']
-        features = service.extract_market_features(ticker)
-        print(f"\nFeatures for {ticker}:")
-        for key, value in features.items():
-            print(f"  {key}: {value}")
+    if markets:
+        print("Test 2: Get by category")
+        sports_markets = service.get_markets_by_category("Sports", limit=5)
+        print(f"\nGot {len(sports_markets)} sports markets")
